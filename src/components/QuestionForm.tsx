@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -6,7 +6,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { Plus, Minus, Save, RotateCcw, Image } from 'lucide-react';
+import { Plus, Minus, Save, RotateCcw, Image, Upload, Loader2, X } from 'lucide-react';
+import { uploadImage } from '@/lib/telegram';
+import { useToast } from '@/hooks/use-toast';
 import type { Question } from './QuizBuilder';
 
 interface QuestionFormProps {
@@ -24,6 +26,12 @@ export const QuestionForm: React.FC<QuestionFormProps> = ({
   onReset,
   isEditing
 }) => {
+  const { toast } = useToast();
+  const [uploadingField, setUploadingField] = useState<string | null>(null);
+  const questionImgRef = useRef<HTMLInputElement>(null);
+  const explanationImgRef = useRef<HTMLInputElement>(null);
+  const optionImgRefs = useRef<(HTMLInputElement | null)[]>([]);
+
   const handleChange = (field: keyof Question, value: any) => {
     setCurrentQuestion(prev => ({ ...prev, [field]: value }));
   };
@@ -36,7 +44,6 @@ export const QuestionForm: React.FC<QuestionFormProps> = ({
 
   const handleOptionImageChange = (index: number, value: string) => {
     const newOptionImages = [...(currentQuestion.optionImages || [])];
-    // Ensure the array is the same length as options
     while (newOptionImages.length < currentQuestion.options.length) {
       newOptionImages.push('');
     }
@@ -66,213 +73,293 @@ export const QuestionForm: React.FC<QuestionFormProps> = ({
     }));
   };
 
-  const insertImage = (field: 'questionText' | 'explanation') => {
-    const url = prompt('Enter image URL:');
-    if (url) {
-      const imgTag = `<img src="${url}" alt="Image" style="max-width:100%; height:auto; border-radius:8px; margin: 8px 0; display: block;" />`;
-      const currentValue = currentQuestion[field];
-      setCurrentQuestion(prev => ({ ...prev, [field]: currentValue + imgTag }));
+  // ── Image upload helpers ──────────────────────────────────
+
+  const handleImageUpload = async (
+    file: File,
+    onSuccess: (url: string) => void,
+    fieldKey: string
+  ) => {
+    setUploadingField(fieldKey);
+    try {
+      const url = await uploadImage(file);
+      onSuccess(url);
+      toast({ title: '✅ Image uploaded', description: 'Diagram saved to Telegram successfully.' });
+    } catch (err) {
+      console.error(err);
+      toast({ title: '❌ Upload failed', description: 'Could not upload image. Check Telegram config.', variant: 'destructive' });
+    } finally {
+      setUploadingField(null);
     }
   };
 
+  const insertImage = (field: 'questionText' | 'explanation', inputRef: React.RefObject<HTMLInputElement>) => {
+    inputRef.current?.click();
+  };
+
+  const onQuestionImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await handleImageUpload(file, (url) => {
+      const imgTag = `<img src="${url}" alt="Diagram" style="max-width:100%; height:auto; border-radius:8px; margin: 8px 0; display: block;" />`;
+      setCurrentQuestion(prev => ({ ...prev, questionText: prev.questionText + imgTag }));
+    }, 'questionText');
+    e.target.value = '';
+  };
+
+  const onExplanationImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await handleImageUpload(file, (url) => {
+      const imgTag = `<img src="${url}" alt="Diagram" style="max-width:100%; height:auto; border-radius:8px; margin: 8px 0; display: block;" />`;
+      setCurrentQuestion(prev => ({ ...prev, explanation: prev.explanation + imgTag }));
+    }, 'explanation');
+    e.target.value = '';
+  };
+
+  const onOptionImageFile = async (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await handleImageUpload(file, (url) => {
+      handleOptionImageChange(index, url);
+    }, `option-${index}`);
+    e.target.value = '';
+  };
+
   return (
-    <Card className="bg-gradient-card border-card-border shadow-glass">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          {isEditing ? 'Edit Question' : 'Add New Question'}
-        </CardTitle>
-        <CardDescription>
-          {isEditing ? 'Update the question details below' : 'Create a new question for your quiz'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {/* Comprehension Text */}
-        <div className="space-y-2">
-          <Label htmlFor="compText">Comprehension Text (Optional)</Label>
-          <Textarea
-            id="compText"
-            value={currentQuestion.compText}
-            onChange={(e) => handleChange('compText', e.target.value)}
-            placeholder="Add any passage or context that applies to this question..."
-            className="min-h-[80px] bg-background/50"
-          />
-        </div>
+    <>
+      {/* Hidden file inputs */}
+      <input ref={questionImgRef} type="file" accept="image/*" className="hidden" onChange={onQuestionImageFile} />
+      <input ref={explanationImgRef} type="file" accept="image/*" className="hidden" onChange={onExplanationImageFile} />
 
-        {/* Question Text */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="questionText">Question Text *</Label>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => insertImage('questionText')}
-            >
-              <Image className="h-4 w-4" />
-              Add Image
-            </Button>
-          </div>
-          <Textarea
-            id="questionText"
-            value={currentQuestion.questionText}
-            onChange={(e) => handleChange('questionText', e.target.value)}
-            placeholder="Enter your question here..."
-            className="min-h-[100px] bg-background/50"
-            required
-          />
-        </div>
+      <Card className="bg-gradient-card border-card-border shadow-glass">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            {isEditing ? 'Edit Question' : 'Add New Question'}
+          </CardTitle>
+          <CardDescription>
+            {isEditing ? 'Update the question details below' : 'Create a new question for your quiz'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
 
-        {/* Options */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label>Answer Options *</Label>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={addOption}
-            >
-              <Plus className="h-4 w-4" />
-              Add Option
-            </Button>
+          {/* Comprehension Text */}
+          <div className="space-y-2">
+            <Label htmlFor="compText">Comprehension Text (Optional)</Label>
+            <Textarea
+              id="compText"
+              value={currentQuestion.compText}
+              onChange={(e) => handleChange('compText', e.target.value)}
+              placeholder="Add any passage or context that applies to this question..."
+              className="min-h-[80px] bg-background/50"
+            />
           </div>
-          
+
+          {/* Question Text */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="questionText">Question Text *</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={uploadingField === 'questionText'}
+                onClick={() => insertImage('questionText', questionImgRef)}
+              >
+                {uploadingField === 'questionText'
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Upload className="h-4 w-4" />}
+                {uploadingField === 'questionText' ? 'Uploading…' : 'Upload Diagram'}
+              </Button>
+            </div>
+            <Textarea
+              id="questionText"
+              value={currentQuestion.questionText}
+              onChange={(e) => handleChange('questionText', e.target.value)}
+              placeholder="Enter your question here..."
+              className="min-h-[100px] bg-background/50"
+              required
+            />
+            {/* Preview any embedded images in question */}
+            {currentQuestion.questionText.includes('<img') && (
+              <div
+                className="mt-2 p-2 border border-border rounded-lg bg-background/30 text-sm text-muted-foreground"
+                dangerouslySetInnerHTML={{ __html: currentQuestion.questionText }}
+              />
+            )}
+          </div>
+
+          {/* Options */}
           <div className="space-y-4">
-            {currentQuestion.options.map((option, index) => (
-              <div key={index} className="space-y-2 p-3 border border-border rounded-lg bg-background/30">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <input
-                      type="radio"
-                      name="correctOption"
-                      checked={currentQuestion.correctOptionIndex === index}
-                      onChange={() => handleChange('correctOptionIndex', index)}
-                      className="text-primary"
-                    />
-                    <Input
-                      value={option}
-                      onChange={(e) => handleOptionChange(index, e.target.value)}
-                      placeholder={`Option ${index + 1} text`}
-                      className="bg-background/50"
-                      required
-                    />
+            <div className="flex items-center justify-between">
+              <Label>Answer Options *</Label>
+              <Button type="button" variant="outline" size="sm" onClick={addOption}>
+                <Plus className="h-4 w-4" />
+                Add Option
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              {currentQuestion.options.map((option, index) => (
+                <div key={index} className="space-y-2 p-3 border border-border rounded-lg bg-background/30">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <input
+                        type="radio"
+                        name="correctOption"
+                        checked={currentQuestion.correctOptionIndex === index}
+                        onChange={() => handleChange('correctOptionIndex', index)}
+                        className="text-primary"
+                      />
+                      <Input
+                        value={option}
+                        onChange={(e) => handleOptionChange(index, e.target.value)}
+                        placeholder={`Option ${index + 1} text`}
+                        className="bg-background/50"
+                        required
+                      />
+                    </div>
+                    {currentQuestion.options.length > 2 && (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => removeOption(index)}>
+                        <Minus className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
-                  {currentQuestion.options.length > 2 && (
+
+                  {/* Option Image Upload */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      ref={el => { optionImgRefs.current[index] = el; }}
+                      onChange={(e) => onOptionImageFile(index, e)}
+                    />
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      onClick={() => removeOption(index)}
+                      disabled={uploadingField === `option-${index}`}
+                      onClick={() => optionImgRefs.current[index]?.click()}
                     >
-                      <Minus className="h-4 w-4" />
+                      {uploadingField === `option-${index}`
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Image className="h-3 w-3" />}
+                      {uploadingField === `option-${index}` ? 'Uploading…' : 'Add Diagram'}
                     </Button>
+                    {currentQuestion.optionImages?.[index] && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleOptionImageChange(index, '')}
+                      >
+                        <X className="h-3 w-3" /> Remove
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Option image preview */}
+                  {currentQuestion.optionImages?.[index] && (
+                    <div className="mt-2">
+                      <img
+                        src={currentQuestion.optionImages[index]}
+                        alt={`Option ${index + 1} diagram`}
+                        className="max-w-48 max-h-48 object-contain border border-border rounded"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    </div>
                   )}
                 </div>
-                
-                {/* Option Image */}
-                <div className="flex items-center gap-2">
-                  <Image className="h-4 w-4 text-muted-foreground" />
-                  <Input
-                    value={currentQuestion.optionImages?.[index] || ''}
-                    onChange={(e) => handleOptionImageChange(index, e.target.value)}
-                    placeholder={`Option ${index + 1} image URL (optional)`}
-                    className="bg-background/50 text-sm"
-                  />
-                </div>
-                
-                {/* Preview image if URL is provided */}
-                {currentQuestion.optionImages?.[index] && (
-                  <div className="mt-2">
-                    <img 
-                      src={currentQuestion.optionImages[index]} 
-                      alt={`Option ${index + 1}`}
-                      className="max-w-32 max-h-32 object-contain border border-border rounded"
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none';
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
 
-        <Separator />
+          <Separator />
 
-        {/* Settings Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="section">Section</Label>
-            <Input
-              id="section"
-              value={currentQuestion.section}
-              onChange={(e) => handleChange('section', e.target.value)}
-              placeholder="Test"
-              className="bg-background/50"
-            />
+          {/* Settings Row */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="section">Section</Label>
+              <Input
+                id="section"
+                value={currentQuestion.section}
+                onChange={(e) => handleChange('section', e.target.value)}
+                placeholder="Test"
+                className="bg-background/50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="positiveMarks">Positive Marks</Label>
+              <Input
+                id="positiveMarks"
+                type="number"
+                value={currentQuestion.positiveMarks}
+                onChange={(e) => handleChange('positiveMarks', parseInt(e.target.value) || 0)}
+                className="bg-background/50"
+                min="0"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="negativeMarks">Negative Marks</Label>
+              <Input
+                id="negativeMarks"
+                type="number"
+                value={currentQuestion.negativeMarks}
+                onChange={(e) => handleChange('negativeMarks', parseInt(e.target.value) || 0)}
+                className="bg-background/50"
+                min="0"
+              />
+            </div>
           </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="positiveMarks">Positive Marks</Label>
-            <Input
-              id="positiveMarks"
-              type="number"
-              value={currentQuestion.positiveMarks}
-              onChange={(e) => handleChange('positiveMarks', parseInt(e.target.value) || 0)}
-              className="bg-background/50"
-              min="0"
-            />
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="negativeMarks">Negative Marks</Label>
-            <Input
-              id="negativeMarks"
-              type="number"
-              value={currentQuestion.negativeMarks}
-              onChange={(e) => handleChange('negativeMarks', parseInt(e.target.value) || 0)}
-              className="bg-background/50"
-              min="0"
-            />
-          </div>
-        </div>
 
-        {/* Explanation */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="explanation">Explanation (Optional)</Label>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => insertImage('explanation')}
-            >
-              <Image className="h-4 w-4" />
-              Add Image
+          {/* Explanation */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="explanation">Explanation (Optional)</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={uploadingField === 'explanation'}
+                onClick={() => insertImage('explanation', explanationImgRef)}
+              >
+                {uploadingField === 'explanation'
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <Upload className="h-4 w-4" />}
+                {uploadingField === 'explanation' ? 'Uploading…' : 'Upload Diagram'}
+              </Button>
+            </div>
+            <Textarea
+              id="explanation"
+              value={currentQuestion.explanation}
+              onChange={(e) => handleChange('explanation', e.target.value)}
+              placeholder="Provide an explanation for the correct answer..."
+              className="min-h-[80px] bg-background/50"
+            />
+            {/* Preview any embedded images in explanation */}
+            {currentQuestion.explanation.includes('<img') && (
+              <div
+                className="mt-2 p-2 border border-border rounded-lg bg-background/30 text-sm text-muted-foreground"
+                dangerouslySetInnerHTML={{ __html: currentQuestion.explanation }}
+              />
+            )}
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-3 pt-4">
+            <Button onClick={onSave} className="flex-1" variant="default">
+              <Save className="h-4 w-4" />
+              {isEditing ? 'Update Question' : 'Add Question'}
+            </Button>
+            <Button onClick={onReset} variant="outline">
+              <RotateCcw className="h-4 w-4" />
+              Reset
             </Button>
           </div>
-          <Textarea
-            id="explanation"
-            value={currentQuestion.explanation}
-            onChange={(e) => handleChange('explanation', e.target.value)}
-            placeholder="Provide an explanation for the correct answer..."
-            className="min-h-[80px] bg-background/50"
-          />
-        </div>
 
-        {/* Action Buttons */}
-        <div className="flex gap-3 pt-4">
-          <Button onClick={onSave} className="flex-1" variant="default">
-            <Save className="h-4 w-4" />
-            {isEditing ? 'Update Question' : 'Add Question'}
-          </Button>
-          <Button onClick={onReset} variant="outline">
-            <RotateCcw className="h-4 w-4" />
-            Reset
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </>
   );
 };
