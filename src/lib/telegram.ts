@@ -151,6 +151,37 @@ export async function deleteQuiz(id: string): Promise<void> {
   await writeIndex(existing.filter(q => q.id !== id));
 }
 
+/**
+ * Upload an image file to the Telegram channel and return a public URL.
+ * The image is sent as a photo message; the file_id is then resolved to a
+ * downloadable URL via our server proxy so it can be embedded in quizzes.
+ */
+export async function uploadImage(file: File): Promise<string> {
+  const form = new FormData();
+  form.append('chat_id', CHANNEL_ID);
+  form.append('disable_notification', 'true');
+  form.append('photo', file, file.name);
+  form.append('caption', `📷 Diagram: ${file.name}`);
+
+  const res = await fetch(`${BASE}/sendPhoto`, { method: 'POST', body: form });
+  const json = await res.json() as {
+    ok: boolean;
+    result: { photo: { file_id: string; file_unique_id: string }[] };
+    description?: string;
+  };
+  if (!json.ok) throw new Error(`[Telegram] sendPhoto: ${json.description}`);
+
+  // Telegram returns multiple sizes; pick the largest (last in array)
+  const photos = json.result.photo;
+  const best = photos[photos.length - 1];
+
+  // Resolve the file_id → file_path via getFile
+  const fileInfo = await tg('getFile', { file_id: best.file_id }) as { file_path: string };
+
+  // Return a URL pointing to our server proxy so CORS is never an issue
+  return `/api/telegram-file?path=${encodeURIComponent(fileInfo.file_path)}`;
+}
+
 /** Validate that bot token + channel id are configured and working. */
 export async function validateConfig(): Promise<{ ok: boolean; error?: string }> {
   if (!BOT_TOKEN || BOT_TOKEN === 'undefined') {
