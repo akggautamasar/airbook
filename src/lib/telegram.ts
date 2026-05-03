@@ -152,34 +152,34 @@ export async function deleteQuiz(id: string): Promise<void> {
 }
 
 /**
- * Upload an image file to the Telegram channel and return a public URL.
- * The image is sent as a photo message; the file_id is then resolved to a
- * downloadable URL via our server proxy so it can be embedded in quizzes.
+ * Upload an image and return a base64 data URL.
+ *
+ * WHY BASE64: Quiz HTML is downloaded by students and opened locally.
+ * A relative URL /api/telegram-file only works on the server.
+ * Base64 embeds the image directly in the HTML — works offline, everywhere.
+ * Telegram backup happens in background (fire-and-forget).
  */
 export async function uploadImage(file: File): Promise<string> {
+  // 1. Convert to base64 — self-contained, works in any HTML file anywhere
+  const base64DataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+
+  // 2. Upload to Telegram in background as backup (non-blocking)
   const form = new FormData();
   form.append('chat_id', CHANNEL_ID);
   form.append('disable_notification', 'true');
   form.append('photo', file, file.name);
-  form.append('caption', `📷 Diagram: ${file.name}`);
+  form.append('caption', `Diagram backup: ${file.name}`);
+  fetch(`${BASE}/sendPhoto`, { method: 'POST', body: form }).catch(() => {
+    console.warn('[AirBook] Telegram backup upload failed -- base64 is saved in quiz.');
+  });
 
-  const res = await fetch(`${BASE}/sendPhoto`, { method: 'POST', body: form });
-  const json = await res.json() as {
-    ok: boolean;
-    result: { photo: { file_id: string; file_unique_id: string }[] };
-    description?: string;
-  };
-  if (!json.ok) throw new Error(`[Telegram] sendPhoto: ${json.description}`);
-
-  // Telegram returns multiple sizes; pick the largest (last in array)
-  const photos = json.result.photo;
-  const best = photos[photos.length - 1];
-
-  // Resolve the file_id → file_path via getFile
-  const fileInfo = await tg('getFile', { file_id: best.file_id }) as { file_path: string };
-
-  // Return a URL pointing to our server proxy so CORS is never an issue
-  return `/api/telegram-file?path=${encodeURIComponent(fileInfo.file_path)}`;
+  // 3. Return base64 data URL — embedded directly in the quiz HTML
+  return base64DataUrl;
 }
 
 /** Validate that bot token + channel id are configured and working. */
