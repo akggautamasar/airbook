@@ -31,8 +31,21 @@ app.get('/api/telegram-file', async (req, res) => {
     if (!upstream.ok) {
       return res.status(upstream.status).json({ error: `Telegram returned ${upstream.status}` });
     }
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'private, max-age=300');
+
+    // Detect content type from file extension so images render correctly
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    const mimeMap = {
+      jpg: 'image/jpeg', jpeg: 'image/jpeg',
+      png: 'image/png', gif: 'image/gif',
+      webp: 'image/webp', svg: 'image/svg+xml',
+      html: 'text/html; charset=utf-8',
+    };
+    const contentType = mimeMap[ext] || upstream.headers.get('content-type') || 'application/octet-stream';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // images can be cached longer
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
     // Stream the response body directly to the client
     const reader = upstream.body.getReader();
     const pump = async () => {
