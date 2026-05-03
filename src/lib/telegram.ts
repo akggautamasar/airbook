@@ -126,11 +126,18 @@ export async function saveQuiz(
 
 /** Download and return the HTML content of a quiz. */
 export async function getQuizHtml(fileId: string): Promise<string> {
-  // Get download URL from Telegram
+  // Step 1: Ask Telegram for the file path (this is a bot API call, works fine client-side)
   const fileInfo = await tg('getFile', { file_id: fileId }) as { file_path: string };
-  const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileInfo.file_path}`;
-  const res = await fetch(downloadUrl);
-  if (!res.ok) throw new Error('Failed to download quiz HTML from Telegram');
+
+  // Step 2: Download via our own server proxy to avoid CORS.
+  // Telegram's file CDN (api.telegram.org/file/bot...) does not send CORS headers,
+  // so a direct browser fetch is blocked. The /api/telegram-file endpoint on our
+  // server fetches the file and streams it back without CORS issues.
+  const res = await fetch(`/api/telegram-file?path=${encodeURIComponent(fileInfo.file_path)}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Failed to download quiz (${res.status})${body ? ': ' + body : ''}`);
+  }
   return res.text();
 }
 
