@@ -1,64 +1,62 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { GraduationCap, Settings } from 'lucide-react';
+import { BookOpen, GraduationCap, Settings, ArrowRight } from 'lucide-react';
 
 const UserTypeSelection = () => {
   const navigate = useNavigate();
 
-  const handleStudentAccess = () => {
-    navigate('/mock-tests');
-  };
-
-  const handleAdminAccess = () => {
-    navigate('/password-protected');
-  };
-
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-md space-y-6">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-primary mb-2">Welcome</h1>
-          <p className="text-muted-foreground">Please select your access type</p>
-        </div>
-        
-        <div className="space-y-4">
-          <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={handleStudentAccess}>
-            <CardHeader className="text-center">
-              <div className="mx-auto mb-2 p-3 bg-primary/10 rounded-full w-fit">
-                <GraduationCap className="h-8 w-8 text-primary" />
-              </div>
-              <CardTitle className="text-xl">Student</CardTitle>
-            </CardHeader>
-            <CardContent className="text-center">
-              <p className="text-muted-foreground mb-4">
-                Access mock tests and practice quizzes
-              </p>
-              <Button className="w-full">
-                Continue as Student
-              </Button>
-            </CardContent>
-          </Card>
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/10 flex flex-col items-center justify-center p-4">
 
-          <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={handleAdminAccess}>
-            <CardHeader className="text-center">
-              <div className="mx-auto mb-2 p-3 bg-secondary/10 rounded-full w-fit">
-                <Settings className="h-8 w-8 text-secondary" />
-              </div>
-              <CardTitle className="text-xl">Admin</CardTitle>
-            </CardHeader>
-            <CardContent className="text-center">
-              <p className="text-muted-foreground mb-4">
-                Create and manage quiz content
-              </p>
-              <Button variant="secondary" className="w-full">
-                Continue as Admin
-              </Button>
-            </CardContent>
-          </Card>
+      {/* Logo */}
+      <div className="text-center mb-10">
+        <div className="mx-auto w-16 h-16 bg-primary rounded-2xl flex items-center justify-center shadow-lg mb-4">
+          <BookOpen className="h-8 w-8 text-white" />
         </div>
+        <h1 className="text-3xl font-bold">
+          Air<span className="text-primary">Book</span>
+        </h1>
+        <p className="text-muted-foreground mt-2 text-sm">The smart quiz platform for serious learners</p>
       </div>
+
+      {/* Cards */}
+      <div className="w-full max-w-sm space-y-4">
+        {/* Student */}
+        <button
+          onClick={() => navigate('/student-auth')}
+          className="w-full group bg-white hover:bg-primary hover:shadow-xl transition-all duration-200 rounded-2xl p-6 border border-border text-left flex items-center gap-5 shadow-sm"
+        >
+          <div className="w-14 h-14 rounded-xl bg-primary/10 group-hover:bg-white/20 flex items-center justify-center transition-colors flex-shrink-0">
+            <GraduationCap className="h-7 w-7 text-primary group-hover:text-white transition-colors" />
+          </div>
+          <div className="flex-1">
+            <div className="font-bold text-lg group-hover:text-white transition-colors">Student</div>
+            <div className="text-sm text-muted-foreground group-hover:text-white/70 transition-colors">
+              Attempt mock tests &amp; track your progress
+            </div>
+          </div>
+          <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-white transition-colors" />
+        </button>
+
+        {/* Admin */}
+        <button
+          onClick={() => navigate('/password-protected')}
+          className="w-full group bg-white hover:bg-slate-800 hover:shadow-xl transition-all duration-200 rounded-2xl p-6 border border-border text-left flex items-center gap-5 shadow-sm"
+        >
+          <div className="w-14 h-14 rounded-xl bg-slate-100 group-hover:bg-white/10 flex items-center justify-center transition-colors flex-shrink-0">
+            <Settings className="h-7 w-7 text-slate-600 group-hover:text-white transition-colors" />
+          </div>
+          <div className="flex-1">
+            <div className="font-bold text-lg group-hover:text-white transition-colors">Admin</div>
+            <div className="text-sm text-muted-foreground group-hover:text-white/70 transition-colors">
+              Create &amp; manage quiz content
+            </div>
+          </div>
+          <ArrowRight className="h-5 w-5 text-muted-foreground group-hover:text-white transition-colors" />
+        </button>
+      </div>
+
+      <p className="mt-8 text-xs text-muted-foreground">Powered by Telegram · No database needed</p>
     </div>
   );
 };
