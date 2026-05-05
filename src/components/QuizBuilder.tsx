@@ -10,9 +10,10 @@ import { BulkImport } from './BulkImport';
 import { QuizSettings } from './QuizSettings';
 import { QuizPreview } from './QuizPreview';
 import { MyTests } from './MyTests';
+import { StudentsPanel } from './StudentsPanel';
 import { generateHtmlQuiz } from '@/lib/quiz-generator';
 import { saveQuiz } from '@/lib/telegram';
-import { FileText, Plus, Settings, Download, Upload, Eye, Trash2, Sparkles, Send } from 'lucide-react';
+import { FileText, Plus, Settings, Download, Upload, Eye, Trash2, Sparkles, Send, Users } from 'lucide-react';
 
 export interface Question {
   id: string;
@@ -182,13 +183,14 @@ export const QuizBuilder: React.FC = () => {
       {/* Main Content */}
       <div className="container mx-auto px-4 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="builder"><Plus className="h-4 w-4 mr-1" />Builder</TabsTrigger>
             <TabsTrigger value="questions"><FileText className="h-4 w-4 mr-1" />Questions</TabsTrigger>
             <TabsTrigger value="import"><Upload className="h-4 w-4 mr-1" />Import</TabsTrigger>
             <TabsTrigger value="settings"><Settings className="h-4 w-4 mr-1" />Settings</TabsTrigger>
             <TabsTrigger value="preview"><Eye className="h-4 w-4 mr-1" />Preview</TabsTrigger>
             <TabsTrigger value="tests"><Download className="h-4 w-4 mr-1" />My Tests</TabsTrigger>
+            <TabsTrigger value="students"><Users className="h-4 w-4 mr-1" />Students</TabsTrigger>
           </TabsList>
 
           <TabsContent value="builder">
@@ -231,6 +233,10 @@ export const QuizBuilder: React.FC = () => {
 
           <TabsContent value="tests">
             <MyTests />
+          </TabsContent>
+
+          <TabsContent value="students">
+            <StudentsPanel />
           </TabsContent>
         </Tabs>
       </div>
