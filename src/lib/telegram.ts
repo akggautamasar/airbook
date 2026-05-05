@@ -1,28 +1,47 @@
 // ============================================================
 // AirBook – Telegram Storage Backend
-//
-// Architecture:
-//   • One private Telegram channel acts as the database.
-//   • Each quiz is uploaded as an HTML document message.
-//   • A pinned "index" message stores JSON metadata for all quizzes
-//     so listing is fast (no need to download every file).
-//   • The index stores file_id so HTML can be fetched directly
-//     via Telegram's file API.
-//   • Bot token + channel id come from env vars.
 // ============================================================
 
 const BOT_TOKEN = import.meta.env.VITE_TELEGRAM_BOT_TOKEN as string;
 const CHANNEL_ID = import.meta.env.VITE_TELEGRAM_CHANNEL_ID as string;
 const BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
+// ── Types ─────────────────────────────────────────────────────
+
 export interface QuizMeta {
-  id: string;        // Telegram message_id of the document message
-  file_id: string;   // Telegram file_id to download HTML
+  id: string;
+  file_id: string;
   title: string;
   description: string;
   question_count: number;
   file_size: number;
-  created_at: string; // ISO string
+  created_at: string;
+  duration_minutes?: number;
+  subject?: string;
+  difficulty?: 'Easy' | 'Medium' | 'Hard';
+}
+
+export interface StudentAccount {
+  id: string;
+  name: string;
+  email: string;
+  password_hash: string;
+  created_at: string;
+  avatar_color: string;
+}
+
+export interface QuizAttempt {
+  id: string;
+  student_id: string;
+  quiz_id: string;
+  quiz_title: string;
+  score: number;
+  total_marks: number;
+  correct: number;
+  wrong: number;
+  skipped: number;
+  time_taken_seconds: number;
+  attempted_at: string;
 }
 
 // ── Core API wrapper ─────────────────────────────────────────
@@ -38,8 +57,54 @@ async function tg(method: string, body: Record<string, unknown> = {}): Promise<u
   return json.result;
 }
 
-// ── Index management ─────────────────────────────────────────
-// The index is stored in a single pinned channel message.
+// ── Local-first store (with Telegram backup) ──────────────────
+// localStorage is the primary read source for student data.
+// Every write is also sent to Telegram as a backup message.
+
+const USERS_MARKER   = 'AIRBOOK_USERS_V1';
+const ATTEMPTS_MARKER = 'AIRBOOK_ATTEMPTS_V1';
+
+function localKey(marker: string) { return `airbook_data_${marker}`; }
+function tgMsgKey(marker: string) { return `airbook_tgmsg_${marker}`; }
+
+async function readStore<T>(marker: string): Promise<T[]> {
+  try {
+    const raw = localStorage.getItem(localKey(marker));
+    return raw ? (JSON.parse(raw) as T[]) : [];
+  } catch { return []; }
+}
+
+async function writeStore<T>(marker: string, data: T[]): Promise<void> {
+  // 1. Write locally (always)
+  localStorage.setItem(localKey(marker), JSON.stringify(data));
+
+  // 2. Backup to Telegram in background
+  if (!BOT_TOKEN || BOT_TOKEN === 'undefined' || !CHANNEL_ID || CHANNEL_ID === 'undefined') return;
+  const text = marker + '\n' + JSON.stringify(data);
+  const msgIdKey = tgMsgKey(marker);
+  const cached = localStorage.getItem(msgIdKey);
+  try {
+    if (cached) {
+      await tg('editMessageText', { chat_id: CHANNEL_ID, message_id: Number(cached), text });
+    } else {
+      const msg = await tg('sendMessage', {
+        chat_id: CHANNEL_ID, text, disable_notification: true,
+      }) as { message_id: number };
+      localStorage.setItem(msgIdKey, String(msg.message_id));
+    }
+  } catch {
+    // Edit failed (message too old / deleted) — send fresh
+    localStorage.removeItem(msgIdKey);
+    try {
+      const msg = await tg('sendMessage', {
+        chat_id: CHANNEL_ID, text, disable_notification: true,
+      }) as { message_id: number };
+      localStorage.setItem(msgIdKey, String(msg.message_id));
+    } catch { /* silent — local data is still safe */ }
+  }
+}
+
+// ── Quiz Index (pinned message) ───────────────────────────────
 
 const INDEX_HEADER = 'AIRBOOK_INDEX_V1\n';
 
@@ -49,46 +114,35 @@ async function readIndex(): Promise<QuizMeta[]> {
     const text = chat?.pinned_message?.text ?? '';
     if (!text.startsWith(INDEX_HEADER)) return [];
     return JSON.parse(text.slice(INDEX_HEADER.length)) as QuizMeta[];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 async function writeIndex(quizzes: QuizMeta[]): Promise<void> {
   const text = INDEX_HEADER + JSON.stringify(quizzes);
   const chat = await tg('getChat', { chat_id: CHANNEL_ID }) as { pinned_message?: { message_id?: number } };
   const pinnedId = chat?.pinned_message?.message_id;
-
   if (pinnedId) {
-    try {
-      await tg('editMessageText', { chat_id: CHANNEL_ID, message_id: pinnedId, text });
-      return;
-    } catch {
-      // If pinned message isn't the index (e.g. first run), fall through to create
-    }
+    try { await tg('editMessageText', { chat_id: CHANNEL_ID, message_id: pinnedId, text }); return; }
+    catch {}
   }
-
-  // Create a new index message and pin it
   const msg = await tg('sendMessage', { chat_id: CHANNEL_ID, text, disable_notification: true }) as { message_id: number };
   await tg('pinChatMessage', { chat_id: CHANNEL_ID, message_id: msg.message_id, disable_notification: true });
 }
 
-// ── Public API ───────────────────────────────────────────────
+// ── Public Quiz API ───────────────────────────────────────────
 
-/** List all quizzes (metadata only, instant). */
 export async function listQuizzes(): Promise<QuizMeta[]> {
   const list = await readIndex();
   return list.sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-/** Save a new quiz. Returns the saved QuizMeta. */
 export async function saveQuiz(
   title: string,
   description: string,
   htmlContent: string,
   questionCount: number,
+  extra?: Partial<Pick<QuizMeta, 'duration_minutes' | 'subject' | 'difficulty'>>,
 ): Promise<QuizMeta> {
-  // Upload HTML as a document
   const form = new FormData();
   form.append('chat_id', CHANNEL_ID);
   form.append('disable_notification', 'true');
@@ -104,35 +158,22 @@ export async function saveQuiz(
     description?: string;
   };
   if (!docJson.ok) throw new Error(`[Telegram] sendDocument: ${docJson.description}`);
-
   const { message_id, document: doc } = docJson.result;
 
   const meta: QuizMeta = {
-    id: String(message_id),
-    file_id: doc.file_id,
-    title,
-    description,
+    id: String(message_id), file_id: doc.file_id, title, description,
     question_count: questionCount,
     file_size: doc.file_size ?? htmlContent.length,
     created_at: new Date().toISOString(),
+    ...(extra || {}),
   };
-
-  // Update index
   const existing = await readIndex();
   await writeIndex([...existing, meta]);
-
   return meta;
 }
 
-/** Download and return the HTML content of a quiz. */
 export async function getQuizHtml(fileId: string): Promise<string> {
-  // Step 1: Ask Telegram for the file path (this is a bot API call, works fine client-side)
   const fileInfo = await tg('getFile', { file_id: fileId }) as { file_path: string };
-
-  // Step 2: Download via our own server proxy to avoid CORS.
-  // Telegram's file CDN (api.telegram.org/file/bot...) does not send CORS headers,
-  // so a direct browser fetch is blocked. The /api/telegram-file endpoint on our
-  // server fetches the file and streams it back without CORS issues.
   const res = await fetch(`/api/telegram-file?path=${encodeURIComponent(fileInfo.file_path)}`);
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -141,59 +182,94 @@ export async function getQuizHtml(fileId: string): Promise<string> {
   return res.text();
 }
 
-/** Delete a quiz by its id (message_id). */
 export async function deleteQuiz(id: string): Promise<void> {
-  // Delete the document message from Telegram
   await tg('deleteMessage', { chat_id: CHANNEL_ID, message_id: Number(id) }).catch(() => {});
-
-  // Remove from index
   const existing = await readIndex();
   await writeIndex(existing.filter(q => q.id !== id));
 }
 
-/**
- * Upload an image and return a base64 data URL.
- *
- * WHY BASE64: Quiz HTML is downloaded by students and opened locally.
- * A relative URL /api/telegram-file only works on the server.
- * Base64 embeds the image directly in the HTML — works offline, everywhere.
- * Telegram backup happens in background (fire-and-forget).
- */
 export async function uploadImage(file: File): Promise<string> {
-  // 1. Convert to base64 — self-contained, works in any HTML file anywhere
   const base64DataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsDataURL(file);
   });
-
-  // 2. Upload to Telegram in background as backup (non-blocking)
   const form = new FormData();
   form.append('chat_id', CHANNEL_ID);
   form.append('disable_notification', 'true');
   form.append('photo', file, file.name);
-  form.append('caption', `Diagram backup: ${file.name}`);
-  fetch(`${BASE}/sendPhoto`, { method: 'POST', body: form }).catch(() => {
-    console.warn('[AirBook] Telegram backup upload failed -- base64 is saved in quiz.');
-  });
-
-  // 3. Return base64 data URL — embedded directly in the quiz HTML
+  fetch(`${BASE}/sendPhoto`, { method: 'POST', body: form }).catch(() => {});
   return base64DataUrl;
 }
 
-/** Validate that bot token + channel id are configured and working. */
 export async function validateConfig(): Promise<{ ok: boolean; error?: string }> {
-  if (!BOT_TOKEN || BOT_TOKEN === 'undefined') {
-    return { ok: false, error: 'VITE_TELEGRAM_BOT_TOKEN is not set' };
+  if (!BOT_TOKEN || BOT_TOKEN === 'undefined') return { ok: false, error: 'VITE_TELEGRAM_BOT_TOKEN is not set' };
+  if (!CHANNEL_ID || CHANNEL_ID === 'undefined') return { ok: false, error: 'VITE_TELEGRAM_CHANNEL_ID is not set' };
+  try { await tg('getMe'); return { ok: true }; }
+  catch (e: unknown) { return { ok: false, error: e instanceof Error ? e.message : 'Unknown error' }; }
+}
+
+// ── Student Account API ───────────────────────────────────────
+
+function simpleHash(str: string): string {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
+  return (h >>> 0).toString(36);
+}
+
+const AVATAR_COLORS = ['#6366f1','#8b5cf6','#ec4899','#f43f5e','#f59e0b','#10b981','#06b6d4','#3b82f6'];
+
+export async function registerStudent(
+  name: string, email: string, password: string,
+): Promise<{ student?: StudentAccount; error?: string }> {
+  const existing = await readStore<StudentAccount>(USERS_MARKER);
+  if (existing.find(s => s.email.toLowerCase() === email.toLowerCase())) {
+    return { error: 'An account with this email already exists.' };
   }
-  if (!CHANNEL_ID || CHANNEL_ID === 'undefined') {
-    return { ok: false, error: 'VITE_TELEGRAM_CHANNEL_ID is not set' };
-  }
-  try {
-    await tg('getMe');
-    return { ok: true };
-  } catch (e: unknown) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Unknown error' };
-  }
+  const student: StudentAccount = {
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    email: email.toLowerCase().trim(),
+    password_hash: simpleHash(password),
+    created_at: new Date().toISOString(),
+    avatar_color: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
+  };
+  await writeStore(USERS_MARKER, [...existing, student]);
+  return { student };
+}
+
+export async function loginStudent(
+  email: string, password: string,
+): Promise<{ student?: StudentAccount; error?: string }> {
+  const existing = await readStore<StudentAccount>(USERS_MARKER);
+  const student = existing.find(
+    s => s.email.toLowerCase() === email.toLowerCase() && s.password_hash === simpleHash(password),
+  );
+  if (!student) return { error: 'Invalid email or password.' };
+  return { student };
+}
+
+export async function getAllStudents(): Promise<StudentAccount[]> {
+  return readStore<StudentAccount>(USERS_MARKER);
+}
+
+// ── Quiz Attempts API ─────────────────────────────────────────
+
+export async function saveAttempt(
+  attempt: Omit<QuizAttempt, 'id' | 'attempted_at'>,
+): Promise<QuizAttempt> {
+  const existing = await readStore<QuizAttempt>(ATTEMPTS_MARKER);
+  const full: QuizAttempt = { ...attempt, id: crypto.randomUUID(), attempted_at: new Date().toISOString() };
+  await writeStore(ATTEMPTS_MARKER, [...existing, full]);
+  return full;
+}
+
+export async function getStudentAttempts(studentId: string): Promise<QuizAttempt[]> {
+  const all = await readStore<QuizAttempt>(ATTEMPTS_MARKER);
+  return all.filter(a => a.student_id === studentId).sort((a, b) => b.attempted_at.localeCompare(a.attempted_at));
+}
+
+export async function getAllAttempts(): Promise<QuizAttempt[]> {
+  return readStore<QuizAttempt>(ATTEMPTS_MARKER);
 }
